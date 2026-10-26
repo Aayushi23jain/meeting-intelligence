@@ -1,0 +1,10 @@
+import { Router } from 'express';
+import { auth } from '../middleware/auth.js';
+import * as c from '../controllers/actionController.js';
+const r = Router();
+r.use(auth);
+r.get('/', c.listActions);
+r.patch('/:id', c.updateAction);
+r.post('/:id/approve', c.approveAction);
+r.post('/:id/reject', c.rejectAction);
+export default r;

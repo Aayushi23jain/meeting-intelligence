@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import { auth } from '../middleware/auth.js';
+import * as c from '../controllers/jiraController.js';
+const r = Router();
+r.post('/webhook', c.webhook);
+r.use(auth);
+r.get('/status', c.status);
+r.post('/connect', c.connect);
+r.get('/projects', c.projects);
+r.get('/issues', c.listIssues);
+r.get('/issues/:id', c.issueDetails);
+r.post('/sync', c.sync);
+r.post('/action-items/:id', c.createIssue);
+export default r;
