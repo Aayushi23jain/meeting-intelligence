@@ -8,10 +8,6 @@ export const connectJira = createAsyncThunk(
   'jira/connect',
   async (projectKey) => (await api.post('/jira/connect', { projectKey })).data,
 );
-export const fetchProjects = createAsyncThunk(
-  'jira/projects',
-  async () => (await api.get('/jira/projects')).data.projects,
-);
 export const createJiraIssue = createAsyncThunk(
   'jira/create',
   async ({ id, projectKey }) => (await api.post(`/jira/action-items/${id}`, { projectKey })).data,
@@ -30,7 +26,6 @@ const slice = createSlice({
     connected: false,
     baseUrl: '',
     defaultProjectKey: '',
-    projects: [],
     issues: [],
     status: 'idle',
     error: '',
@@ -40,17 +35,17 @@ const slice = createSlice({
   extraReducers: (b) => {
     b.addCase(fetchJiraStatus.fulfilled, (s, a) => Object.assign(s, a.payload));
     b.addCase(connectJira.fulfilled, (s, a) => Object.assign(s, a.payload));
-    b.addCase(fetchProjects.fulfilled, (s, a) => {
-      s.projects = a.payload;
-    });
     b.addCase(fetchJiraIssues.fulfilled, (s, a) => {
       s.issues = a.payload;
+    });
+    b.addCase(createJiraIssue.fulfilled, (s) => {
+      s.status = 'succeeded';
     });
     b.addCase(syncJira.fulfilled, (s, a) => {
       s.lastSync = a.payload;
       s.status = 'succeeded';
     });
-    for (const t of [connectJira, fetchProjects, createJiraIssue, syncJira])
+    for (const t of [connectJira, createJiraIssue, syncJira])
       b.addCase(t.pending, (s) => {
         s.status = 'loading';
         s.error = '';

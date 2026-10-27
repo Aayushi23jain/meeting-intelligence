@@ -13,16 +13,26 @@ export async function status(req, res) {
 export async function connect(req, res) {
   try {
     const { base } = jiraConfig();
-    const projects = await jiraRequest('/rest/api/3/project/search?maxResults=1');
+    const projectKey = String(req.body.projectKey || process.env.JIRA_DEFAULT_PROJECT_KEY || '')
+      .trim()
+      .toUpperCase();
+    if (!projectKey) return res.status(400).json({ error: 'Enter a Jira project key.' });
+    // Fails for a key that does not exist or that the configured Jira account cannot see.
+    let project;
+    try {
+      project = await jiraRequest(`/rest/api/3/project/${encodeURIComponent(projectKey)}`);
+    } catch {
+      return res
+        .status(400)
+        .json({ error: `Jira project ${projectKey} was not found or is not accessible.` });
+    }
     const integration = await JiraIntegration.findOneAndUpdate(
       { userId: req.user.id },
       {
         $set: {
           baseUrl: base,
           email: process.env.JIRA_EMAIL,
-          defaultProjectKey: String(
-            req.body.projectKey || process.env.JIRA_DEFAULT_PROJECT_KEY || '',
-          ),
+          defaultProjectKey: project.key,
           connected: true,
         },
       },
@@ -31,26 +41,31 @@ export async function connect(req, res) {
     res.json({
       connected: true,
       baseUrl: base,
-      projectsChecked: projects.values?.length || 0,
+      projectName: project.name,
       defaultProjectKey: integration.defaultProjectKey,
     });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 }
-export async function projects(_req, res) {
+// Only someone with a Jira account who can take work in the project is assigned, and only on an
+// unambiguous name match: full display name, or a first name shared by exactly one user.
+async function findAssignee(owner, projectKey) {
+  const name = String(owner || '').trim().toLowerCase();
+  if (!name) return null;
   try {
-    const data = await jiraRequest('/rest/api/3/project/search?maxResults=100');
-    res.json({
-      projects: (data.values || []).map((p) => ({
-        id: p.id,
-        key: p.key,
-        name: p.name,
-        projectTypeKey: p.projectTypeKey,
-      })),
-    });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
+    const users = await jiraRequest(
+      `/rest/api/3/user/assignable/search?project=${encodeURIComponent(projectKey)}&query=${encodeURIComponent(name)}&maxResults=50`,
+    );
+    const people = users.filter((u) => u.active && u.accountType === 'atlassian');
+    const full = people.filter((u) => String(u.displayName || '').toLowerCase() === name);
+    if (full.length === 1) return full[0];
+    const first = people.filter(
+      (u) => String(u.displayName || '').toLowerCase().split(/\s+/)[0] === name,
+    );
+    return first.length === 1 ? first[0] : null;
+  } catch {
+    return null;
   }
 }
 export async function createIssue(req, res) {
@@ -62,8 +77,9 @@ export async function createIssue(req, res) {
       .json({ error: 'Approve the action item before creating a Jira ticket.' });
   if (item.jiraIssueKey)
     return res.status(409).json({ error: `Already linked to ${item.jiraIssueKey}` });
+  const saved = await JiraIntegration.findOne({ userId: req.user.id }).select('defaultProjectKey');
   const projectKey = String(
-    req.body.projectKey || process.env.JIRA_DEFAULT_PROJECT_KEY || '',
+    req.body.projectKey || saved?.defaultProjectKey || process.env.JIRA_DEFAULT_PROJECT_KEY || '',
   ).trim();
   if (!projectKey) return res.status(400).json({ error: 'Choose a Jira project key.' });
   try {
@@ -91,20 +107,8 @@ export async function createIssue(req, res) {
         description: { type: 'doc', version: 1, content: paragraphs },
       },
     };
-    if (item.owner) {
-      try {
-        const matches = await jiraRequest(
-          `/rest/api/3/user/search?query=${encodeURIComponent(item.owner)}&maxResults=10`,
-        );
-        const user =
-          matches.find(
-            (u) => String(u.displayName || '').toLowerCase() === item.owner.toLowerCase(),
-          ) || matches[0];
-        if (user?.accountId) payload.fields.assignee = { accountId: user.accountId };
-      } catch {
-        /* ticket can still be created with owner retained in description */
-      }
-    }
+    const assignee = await findAssignee(item.owner, projectKey);
+    if (assignee) payload.fields.assignee = { accountId: assignee.accountId };
     if (item.deadline && /^\d{4}-\d{2}-\d{2}$/.test(item.deadline))
       payload.fields.duedate = item.deadline;
     const created = await jiraRequest('/rest/api/3/issue', {
@@ -120,7 +124,7 @@ export async function createIssue(req, res) {
       issueKey: created.key,
       url: `${base}/browse/${created.key}`,
       status: 'To Do',
-      assignee: item.owner,
+      assignee: assignee?.displayName || 'Unassigned',
       priority: item.priority,
       lastSyncedAt: new Date(),
     };
@@ -136,26 +140,6 @@ export async function createIssue(req, res) {
     res.status(502).json({ error: e.message });
   }
 }
-export async function issueDetails(req, res) {
-  try {
-    const data = await jiraRequest(
-      `/rest/api/3/issue/${encodeURIComponent(req.params.id)}?fields=status,assignee,priority,summary`,
-    );
-    res.json({
-      issue: {
-        id: data.id,
-        key: data.key,
-        summary: data.fields.summary,
-        status: data.fields.status?.name || 'Unknown',
-        assignee: data.fields.assignee?.displayName || '',
-        priority: data.fields.priority?.name || '',
-        url: `${jiraConfig().base}/browse/${data.key}`,
-      },
-    });
-  } catch (e) {
-    res.status(502).json({ error: e.message });
-  }
-}
 export async function sync(req, res) {
   const issues = await JiraIssue.find({ userId: req.user.id });
   const results = [];
@@ -166,7 +150,7 @@ export async function sync(req, res) {
       );
       const f = data.fields;
       issue.status = f.status?.name || issue.status;
-      issue.assignee = f.assignee?.displayName || '';
+      issue.assignee = f.assignee?.displayName || 'Unassigned';
       issue.priority = f.priority?.name || issue.priority;
       issue.lastSyncedAt = new Date();
       await issue.save();
@@ -194,31 +178,4 @@ export async function listIssues(req, res) {
       .populate('actionItemId', 'title owner priority')
       .sort({ updatedAt: -1 }),
   });
-}
-export async function webhook(req, res) {
-  const secret = process.env.JIRA_WEBHOOK_SECRET;
-  if (!secret)
-    return res
-      .status(503)
-      .json({ error: 'Configure JIRA_WEBHOOK_SECRET before enabling webhook updates.' });
-  if (req.headers['x-webhook-secret'] !== secret)
-    return res.status(401).json({ error: 'Invalid webhook secret' });
-  const key = req.body?.issue?.key;
-  if (!key) return res.status(400).json({ error: 'Missing issue key' });
-  const data = await JiraIssue.findOne({ issueKey: key });
-  if (data) {
-    const fields = req.body.issue.fields || {};
-    data.status = fields.status?.name || data.status;
-    data.assignee = fields.assignee?.displayName || data.assignee;
-    data.lastSyncedAt = new Date();
-    await data.save();
-    await ActionItem.findByIdAndUpdate(data.actionItemId, {
-      $set: {
-        jiraStatus: data.status,
-        jiraAssignee: data.assignee,
-        lastJiraSyncAt: data.lastSyncedAt,
-      },
-    });
-  }
-  res.json({ ok: true });
 }

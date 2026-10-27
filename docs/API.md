@@ -1,6 +1,6 @@
 # API reference
 
-All endpoints except `/api/health`, `/api/auth/register`, `/api/auth/login`, and `/api/jira/webhook` require the HTTP-only session cookie. JSON errors use `{ "error": "..." }`.
+All endpoints except `/api/health`, `/api/auth/register`, and `/api/auth/login` require the HTTP-only session cookie. JSON errors use `{ "error": "..." }`.
 
 ## Auth
 - `POST /api/auth/register` — `{name,email,password}`
@@ -9,13 +9,14 @@ All endpoints except `/api/health`, `/api/auth/register`, `/api/auth/login`, and
 - `POST /api/auth/logout`
 
 ## Meetings
-- `POST /api/meetings/upload` — multipart form: `title`, optional `transcript`, optional `file` (audio/video)
-- `POST /api/meetings/analyze` — JSON `{title,transcript}` for transcript-first analysis
 - `GET /api/meetings`
 - `GET /api/meetings/:id`
-- `GET /api/meetings/:id/transcript`
-- `GET /api/meetings/:id/action-items`
 - `POST /api/meetings/:id/retry`
+
+## Zoom
+- `GET /api/zoom/status` — `{configured, userId}`
+- `GET /api/zoom/recordings?from=YYYY-MM-DD&to=YYYY-MM-DD` — cloud recordings (default: last 30 days), each with `hasTranscript`, `hasAudio` and the imported `meetingId` if any
+- `POST /api/zoom/recordings/import` — `{uuid}`; creates and queues a meeting, or returns the existing one if already imported
 
 ## Action items
 - `GET /api/action-items?state=pending&meetingId=<id>`
@@ -26,10 +27,7 @@ All endpoints except `/api/health`, `/api/auth/register`, `/api/auth/login`, and
 ## Jira
 - `GET /api/jira/status`
 - `POST /api/jira/connect` — `{projectKey}`; validates configured server credentials and saves default project
-- `GET /api/jira/projects`
 - `POST /api/jira/action-items/:id` — `{projectKey}`; approved items only
 - `GET /api/jira/issues`
-- `GET /api/jira/issues/:id`
 - `POST /api/jira/sync`
-- `POST /api/jira/webhook` — optional `x-webhook-secret` header and Jira webhook payload containing `issue.key`
 - `GET /api/analytics/overview`

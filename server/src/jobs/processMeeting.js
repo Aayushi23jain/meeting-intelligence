@@ -1,10 +1,9 @@
-import fs from 'node:fs/promises';
 import Meeting from '../models/Meeting.js';
 import ActionItem from '../models/ActionItem.js';
-import Speaker from '../models/Speaker.js';
 import { parseTranscript } from '../utils/transcript.js';
 import { transcribeMedia } from '../services/transcription/transcribe.js';
 import { analyzeMeeting } from '../services/ai/analyzeMeeting.js';
+import { identifySpeakers } from '../services/ai/identifySpeakers.js';
 export async function processMeeting(meetingId) {
   const meeting = await Meeting.findById(meetingId);
   if (!meeting) throw new Error('Meeting not found');
@@ -14,11 +13,12 @@ export async function processMeeting(meetingId) {
   try {
     let transcript = meeting.transcript || '',
       lines = [];
-    if (meeting.sourceType !== 'transcript' && meeting.filePath) {
-      const result = await transcribeMedia(meeting.filePath, meeting.originalName);
+    if (meeting.storageKey) {
+      const result = await transcribeMedia(meeting.storageKey, meeting.originalName);
       transcript = result.text;
       lines = result.segments.length ? result.segments : parseTranscript(transcript);
-    } else if (meeting.sourceType === 'live' && meeting.transcriptLines?.length)
+      if (lines.every((l) => l.speaker === 'Unknown')) lines = await identifySpeakers(lines);
+    } else if (meeting.transcriptLines?.length)
       lines = meeting.transcriptLines.map((l) => l.toObject());
     else lines = parseTranscript(transcript);
     if (!lines.length && transcript) lines.push(...parseTranscript(transcript));
@@ -33,11 +33,6 @@ export async function processMeeting(meetingId) {
     meeting.processedAt = new Date();
     await meeting.save();
     await ActionItem.deleteMany({ meetingId: meeting._id });
-    await Speaker.deleteMany({ meetingId: meeting._id });
-    if (result.speakers?.length)
-      await Speaker.insertMany(
-        result.speakers.map((sp) => ({ ...sp, meetingId: meeting._id, userId: meeting.userId })),
-      );
     if (result.actionItems?.length)
       await ActionItem.insertMany(
         result.actionItems.map((a) => ({

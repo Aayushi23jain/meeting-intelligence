@@ -1,32 +1,42 @@
 import Meeting from '../models/Meeting.js';
 import ActionItem from '../models/ActionItem.js';
 import JiraIssue from '../models/JiraIssue.js';
-import Speaker from '../models/Speaker.js';
 export async function overview(req, res) {
   const uid = req.user.id;
-  const [meetings, actions, jira, speakerRows] = await Promise.all([
-    Meeting.find({ userId: uid }).sort({ createdAt: -1 }).limit(10).select('-filePath'),
-    ActionItem.find({ userId: uid }),
+  const [meetings, actions, jira] = await Promise.all([
+    Meeting.find({ userId: uid }).sort({ createdAt: -1 }).select('title createdAt processingStatus sourceType'),
+    ActionItem.find({ userId: uid }).sort({ createdAt: 1 }),
     JiraIssue.find({ userId: uid }),
-    Speaker.find({ userId: uid }),
   ]);
-  const speakers = {};
-  for (const s of speakerRows) {
-    const x = speakers[s.name] || { name: s.name, utterances: 0, wordCount: 0 };
-    x.utterances += s.utterances || 0;
-    x.wordCount += s.wordCount || 0;
-    speakers[s.name] = x;
-  }
+  // Each meeting with the tasks extracted from it and, where one was created, their Jira ticket.
+  const byMeeting = meetings.map((m) => ({
+    _id: m._id,
+    title: m.title,
+    createdAt: m.createdAt,
+    processingStatus: m.processingStatus,
+    tasks: actions
+      .filter((a) => String(a.meetingId) === String(m._id))
+      .map((a) => ({
+        _id: a._id,
+        title: a.title,
+        owner: a.owner,
+        reviewState: a.reviewState,
+        jiraIssueKey: a.jiraIssueKey,
+        jiraStatus: a.jiraStatus,
+        jiraAssignee: a.jiraAssignee,
+        jiraUrl: a.jiraUrl,
+      })),
+  }));
   res.json({
     stats: {
-      meetings: await Meeting.countDocuments({ userId: uid }),
+      meetings: meetings.length,
       pending: actions.filter((a) => a.reviewState === 'pending').length,
       approved: actions.filter((a) => a.reviewState === 'approved').length,
       jira: jira.length,
       completed: jira.filter((i) => /done|closed|resolved/i.test(i.status || '')).length,
     },
-    meetings,
+    meetings: meetings.slice(0, 10),
     actions,
-    speakers: Object.values(speakers).sort((a, b) => b.wordCount - a.wordCount),
+    byMeeting,
   });
 }

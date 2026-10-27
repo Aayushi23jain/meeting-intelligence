@@ -23,3 +23,7 @@ export function parseTranscript(text) {
     })
     .filter(Boolean);
 }
+export function formatTime(n = 0) {
+  const s = Math.floor(n);
+  return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}

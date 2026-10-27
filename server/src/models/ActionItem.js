@@ -17,7 +17,6 @@ const schema = new mongoose.Schema(
     startSeconds: Number,
     sourceLineId: String,
     sourceText: String,
-    confidence: { type: Number, min: 0, max: 1, default: 0.5 },
     reviewState: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     jiraIssueKey: String,
     jiraIssueId: String,

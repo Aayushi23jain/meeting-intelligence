@@ -5,41 +5,22 @@ import {
   Activity,
   AudioLines,
   LayoutDashboard,
-  UploadCloud,
   ListChecks,
   Ticket,
   BarChart3,
   Settings as SettingsIcon,
   LogOut,
   Menu,
-  RefreshCw,
-  Plus,
-  Clock3,
   CheckCircle2,
-  AlertCircle,
   FileText,
   ArrowUpRight,
-  Link2,
-  PlayCircle,
-  Search,
   LoaderCircle,
-  UserRound,
-  CalendarDays,
   ChevronRight,
-  Radio,
-  Mic,
-  Monitor,
-  Square,
+  UploadCloud,
 } from 'lucide-react';
-import { useLiveCapture, liveSupported } from './hooks/useLiveCapture';
 import { api } from './services/api';
 import { loadSession, login, register, logout } from './store/slices/authSlice';
-import {
-  fetchMeetings,
-  fetchMeeting,
-  uploadMeeting,
-  analyzeTranscript,
-} from './store/slices/meetingSlice';
+import { fetchMeetings, fetchMeeting, uploadMeeting } from './store/slices/meetingSlice';
 import {
   fetchActions,
   updateAction,
@@ -49,7 +30,6 @@ import {
 import {
   fetchJiraStatus,
   connectJira,
-  fetchProjects,
   createJiraIssue,
   syncJira,
   fetchJiraIssues,
@@ -57,12 +37,8 @@ import {
 import { selectAction } from './store/slices/uiSlice';
 import { setTranscriptLines, selectTranscriptLine } from './store/slices/transcriptSlice';
 import TranscriptLine from './components/Transcript/TranscriptLine';
-import ProcessingPipeline from './components/MeetingUpload/ProcessingPipeline';
-import SpeakerBars from './components/Analytics/SpeakerBars';
 import JiraStatusBadge from './components/Jira/JiraStatusBadge';
 import ActionEvidence from './components/ActionItems/ActionEvidence';
-const sample =
-  '[00:00:12] Aayushi: We need to finish the dashboard frontend by Friday.\n[00:00:35] Rahul: I will handle the login API integration by Thursday.\n[00:01:05] Team: We decided to add email notifications in the next sprint.\n[00:01:22] Priya: I will prepare the test cases by October 20.';
 function AuthPage() {
   const d = useDispatch(),
     nav = useNavigate(),
@@ -144,14 +120,20 @@ function Brand() {
 function Shell({ children }) {
   const d = useDispatch(),
     a = useSelector((s) => s.auth),
-    [mobile, setMobile] = useState(false);
+    [mobile, setMobile] = useState(false),
+    [menu, setMenu] = useState(false),
+    menuRef = useRef(null);
+  // Close the account menu on any click outside it.
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e) => !menuRef.current?.contains(e.target) && setMenu(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [menu]);
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobile ? 'show' : ''}`}>
         <Brand />
-        <div className="workspace-pill">
-          <span className="online-dot" /> Personal workspace
-        </div>
         <p className="nav-label">WORKSPACE</p>
         <nav>
           <NavLink end to="/">
@@ -161,10 +143,6 @@ function Shell({ children }) {
           <NavLink to="/upload">
             <UploadCloud size={17} />
             Upload meeting
-          </NavLink>
-          <NavLink to="/live">
-            <Radio size={17} />
-            Live meeting
           </NavLink>
           <NavLink to="/actions">
             <ListChecks size={17} />
@@ -183,18 +161,20 @@ function Shell({ children }) {
             Settings
           </NavLink>
         </nav>
-        <div className="sidebar-bottom">
-          <div className="user-chip">
+        <div className="sidebar-bottom" ref={menuRef}>
+          {menu && (
+            <div className="user-menu">
+              <small>{a.user?.email}</small>
+              <button className="logout" onClick={() => d(logout())}>
+                <LogOut size={16} /> Sign out
+              </button>
+            </div>
+          )}
+          <button className="user-chip" onClick={() => setMenu(!menu)}>
             <span className="avatar">
               {(a.user?.name || a.user?.email || 'U').slice(0, 1).toUpperCase()}
             </span>
-            <div>
-              <b>{a.user?.name || a.user?.email}</b>
-              <small>{a.user?.email}</small>
-            </div>
-          </div>
-          <button className="logout" onClick={() => d(logout())}>
-            <LogOut size={16} /> Sign out
+            <b>{a.user?.name || a.user?.email}</b>
           </button>
         </div>
       </aside>
@@ -205,12 +185,6 @@ function Shell({ children }) {
           </button>
           <div className="crumb">
             WORKSPACE <ChevronRight size={13} /> <span>MEETING INTELLIGENCE</span>
-          </div>
-          <div className="top-actions">
-            <span className="status-dot" /> System ready{' '}
-            <span className="avatar small-avatar">
-              {(a.user?.name || a.user?.email || 'U').slice(0, 1).toUpperCase()}
-            </span>
           </div>
         </header>
         <div className="page-content">{children}</div>
@@ -270,11 +244,8 @@ function Dashboard() {
         sub="Turn conversations into clear decisions and trackable work."
         action={
           <div className="actions-head-controls">
-            <NavLink className="secondary button-link" to="/live">
-              <Radio size={16} /> Go live
-            </NavLink>
             <NavLink className="primary button-link" to="/upload">
-              <Plus size={16} /> New meeting
+              <UploadCloud size={16} /> Upload meeting
             </NavLink>
           </div>
         }
@@ -356,7 +327,7 @@ function Dashboard() {
       <div className="section-row">
         <div>
           <h2>Recent meetings</h2>
-          <p>Latest meeting uploads and processing status.</p>
+          <p>Latest uploaded meetings and processing status.</p>
         </div>
         <NavLink className="subtle-link" to="/upload">
           Upload a meeting <ArrowUpRight size={15} />
@@ -383,7 +354,7 @@ function Dashboard() {
           <div className="empty-state">
             <FileText size={26} />
             <b>No meetings yet</b>
-            <p>Upload a transcript or meeting recording to begin.</p>
+            <p>Upload a meeting recording to begin.</p>
             <NavLink className="primary button-link" to="/upload">
               Upload your first meeting
             </NavLink>
@@ -395,288 +366,55 @@ function Dashboard() {
 }
 function UploadPage() {
   const d = useDispatch(),
+    nav = useNavigate(),
     m = useSelector((s) => s.meetings);
-  const [title, setTitle] = useState('Weekly project sync'),
-    [transcript, setTranscript] = useState(''),
-    [file, setFile] = useState(null),
-    [kind, setKind] = useState('transcript');
+  const [title, setTitle] = useState(''),
+    [file, setFile] = useState(null);
   const submit = (e) => {
     e.preventDefault();
-    if (kind === 'transcript')
-      d(analyzeTranscript({ title, transcript }))
-        .unwrap()
-        .then((x) => (location.href = `/meetings/${x.meeting._id}`))
-        .catch(() => {});
-    else
-      d(uploadMeeting({ title, file }))
-        .unwrap()
-        .then((x) => (location.href = `/meetings/${x._id}`))
-        .catch(() => {});
+    d(uploadMeeting({ title, file }))
+      .unwrap()
+      .then((x) => nav(`/meetings/${x._id}`))
+      .catch(() => {});
   };
   return (
     <>
       <PageHead
-        eyebrow="MEETING INGESTION"
-        title="Capture a meeting"
-        sub="Upload a recording or paste a transcript. Long-running jobs are processed in the background."
+        eyebrow="MEETING UPLOAD"
+        title="Upload a meeting"
+        sub="Upload a meeting recording. It is transcribed and analysed in the background."
       />
-      <div className="upload-layout">
-        <form className="panel upload-panel" onSubmit={submit}>
-          <label className="field-label">
-            Meeting title
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Product planning — October"
-              required
-            />
-          </label>
-          <div className="mode-tabs">
-            <button
-              type="button"
-              className={kind === 'transcript' ? 'selected' : ''}
-              onClick={() => setKind('transcript')}
-            >
-              <FileText size={16} /> Transcript
-            </button>
-            <button
-              type="button"
-              className={kind === 'media' ? 'selected' : ''}
-              onClick={() => setKind('media')}
-            >
-              <AudioLines size={16} /> Audio / video
-            </button>
-          </div>
-          {kind === 'transcript' ? (
+      <form className="panel" onSubmit={submit}>
+        <label className="field-label">
+          Meeting title
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Weekly project sync"
+          />
+        </label>
+        <label className="dropzone">
+          <input
+            type="file"
+            accept="audio/*,video/*"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            required
+          />
+          <UploadCloud size={30} />
+          <b>{file ? file.name : 'Choose an audio or video file'}</b>
+          <span>Audio/video supported · Max {import.meta.env.VITE_MAX_UPLOAD_MB || 25} MB</span>
+        </label>
+        <button className="primary wide" disabled={!file || m.status === 'loading'}>
+          {m.status === 'loading' ? (
             <>
-              <label className="field-label">
-                Transcript
-                <textarea
-                  rows="12"
-                  value={transcript}
-                  onChange={(e) => setTranscript(e.target.value)}
-                  placeholder={
-                    '[00:00:12] Aayushi: We need to finish the dashboard by Friday.\n[00:00:35] Rahul: I will handle API integration.'
-                  }
-                  required
-                />
-              </label>
-              <div className="form-foot">
-                <button type="button" className="secondary" onClick={() => setTranscript(sample)}>
-                  Load sample transcript
-                </button>
-                <span>Speaker names and timestamps improve evidence linking.</span>
-              </div>
+              <LoaderCircle className="spin" size={17} /> Uploading…
             </>
           ) : (
-            <>
-              <label className="dropzone">
-                <input
-                  type="file"
-                  accept="audio/*,video/*"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  required
-                />
-                <UploadCloud size={30} />
-                <b>{file ? file.name : 'Choose an audio or video file'}</b>
-                <span>
-                  Audio/video supported · Max {import.meta.env.VITE_MAX_UPLOAD_MB || 100} MB
-                </span>
-                <small>
-                  Transcription requires OPENAI_API_KEY; background processing requires Redis.
-                </small>
-              </label>
-            </>
+            'Upload & analyze'
           )}
-          <button className="primary wide" disabled={m.status === 'loading'}>
-            {m.status === 'loading' ? (
-              <>
-                <LoaderCircle className="spin" size={17} /> Submitting…
-              </>
-            ) : (
-              <>
-                <SparklesIcon /> Process meeting
-              </>
-            )}
-          </button>
-          {m.error && <p className="error-text">{m.error}</p>}
-        </form>
-        <aside className="panel process-panel">
-          <span className="eyebrow">WHAT HAPPENS NEXT</span>
-          <h3>Processing pipeline</h3>
-          <ProcessingPipeline />
-          <div className="hint-box">
-            AI output is a draft. Confirm owners, deadlines and source evidence before creating Jira
-            tickets.
-          </div>
-        </aside>
-      </div>
-    </>
-  );
-}
-function SparklesIcon() {
-  return <Activity size={17} />;
-}
-const clock = (n) =>
-  `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
-function LivePage() {
-  const nav = useNavigate(),
-    live = useLiveCapture(),
-    box = useRef(null);
-  const [title, setTitle] = useState('Live meeting'),
-    [tab, setTab] = useState(true),
-    [mic, setMic] = useState(true);
-  useEffect(() => {
-    if (live.state === 'done') nav(`/meetings/${live.meetingId}`);
-  }, [live.state]);
-  useEffect(() => {
-    box.current?.scrollTo({ top: box.current.scrollHeight, behavior: 'smooth' });
-  }, [live.lines.length]);
-  const busy = ['starting', 'live', 'finishing'].includes(live.state);
-  return (
-    <>
-      <PageHead
-        eyebrow="LIVE CAPTURE"
-        title="Live meeting"
-        sub="Capture a meeting while it happens. The transcript fills in every 30 seconds and the full analysis runs when you stop."
-        action={
-          live.state === 'live' && (
-            <span className="live-indicator">
-              <span className="live-dot" /> Recording · {clock(live.elapsed)}
-            </span>
-          )
-        }
-      />
-      <div className="upload-layout">
-        <div className="panel upload-panel">
-          <label className="field-label">
-            Meeting title
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={busy}
-              placeholder="e.g. Daily standup"
-            />
-          </label>
-          <div className="live-sources">
-            <label className={`live-source ${tab ? 'on' : ''}`}>
-              <input
-                type="checkbox"
-                checked={tab}
-                disabled={busy}
-                onChange={(e) => setTab(e.target.checked)}
-              />
-              <Monitor size={16} />
-              <span>
-                <b>Meeting tab audio</b>
-                <small>Google Meet, Zoom web or Teams web in another tab</small>
-              </span>
-            </label>
-            <label className={`live-source ${mic ? 'on' : ''}`}>
-              <input
-                type="checkbox"
-                checked={mic}
-                disabled={busy}
-                onChange={(e) => setMic(e.target.checked)}
-              />
-              <Mic size={16} />
-              <span>
-                <b>My microphone</b>
-                <small>Your own voice, or an in-person meeting</small>
-              </span>
-            </label>
-          </div>
-          {!liveSupported() ? (
-            <p className="error-text">
-              This browser cannot record audio. Use the latest Chrome or Edge.
-            </p>
-          ) : live.state === 'live' ? (
-            <button className="primary wide danger-fill" onClick={live.stop}>
-              <Square size={15} /> Stop & analyze
-            </button>
-          ) : (
-            <button
-              className="primary wide"
-              disabled={busy || !title.trim()}
-              onClick={() => live.start({ title, tab, mic })}
-            >
-              {live.state === 'starting' ? (
-                <>
-                  <LoaderCircle className="spin" size={17} /> Starting…
-                </>
-              ) : live.state === 'finishing' ? (
-                <>
-                  <LoaderCircle className="spin" size={17} /> Transcribing last chunk…
-                </>
-              ) : (
-                <>
-                  <Radio size={17} /> Start live capture
-                </>
-              )}
-            </button>
-          )}
-          {live.error && <p className="error-text">{live.error}</p>}
-          <div className="section-row live-head">
-            <div>
-              <h3>Live transcript</h3>
-              <p>
-                {live.pending
-                  ? `Transcribing ${live.pending} chunk${live.pending > 1 ? 's' : ''}…`
-                  : live.state === 'live'
-                    ? 'Listening…'
-                    : 'Lines appear here during capture.'}
-              </p>
-            </div>
-            <span className="pill">{live.lines.length} lines</span>
-          </div>
-          <div className="live-transcript" ref={box}>
-            {live.lines.map((l) => (
-              <div className="live-line" key={l.id}>
-                <time>{l.timestamp}</time>
-                <p>{l.text}</p>
-              </div>
-            ))}
-            {!live.lines.length && (
-              <p className="muted">
-                {live.state === 'live'
-                  ? 'The first lines arrive about 30 seconds after you start.'
-                  : 'Nothing captured yet.'}
-              </p>
-            )}
-          </div>
-        </div>
-        <aside className="panel process-panel">
-          <span className="eyebrow">HOW IT WORKS</span>
-          <h3>Capture a live meeting</h3>
-          {[
-            ['Open the meeting', 'Join Google Meet, Zoom or Teams in another Chrome or Edge tab.'],
-            [
-              'Start capture',
-              'Pick the meeting tab and switch on “Share tab audio”. Keep the microphone on so your own voice is included.',
-            ],
-            [
-              'Watch the transcript',
-              'Audio is sent in 30-second chunks and transcribed while the meeting runs.',
-            ],
-            [
-              'Stop & analyze',
-              'You get the summary, decisions and action items, ready to review and send to Jira.',
-            ],
-          ].map(([a, b], i) => (
-            <div className="requirement" key={a}>
-              <span className="live-step">{i + 1}</span>
-              <div>
-                <b>{a}</b>
-                <small>{b}</small>
-              </div>
-            </div>
-          ))}
-          <div className="hint-box">
-            Tell participants the meeting is being recorded and transcribed before you start. Keep
-            this tab open until you stop. Closing it ends the capture.
-          </div>
-        </aside>
-      </div>
+        </button>
+        {m.error && <p className="error-text">{m.error}</p>}
+      </form>
     </>
   );
 }
@@ -710,11 +448,6 @@ function MeetingPage() {
     }, 3000);
     return () => clearInterval(t);
   }, [meeting?.processingStatus, id]);
-  const finishLive = () =>
-    api
-      .post(`/meetings/${id}/live/finish`)
-      .then(() => d(fetchMeeting(id)))
-      .catch(() => {});
   const items = acts.items.filter((a) => String(a.meetingId?._id || a.meetingId) === id);
   return (
     <>
@@ -777,11 +510,6 @@ function MeetingPage() {
                 <b>{meeting.sourceType}</b>
               </div>
               {meeting.processingError && <p className="error-text">{meeting.processingError}</p>}
-              {meeting.processingStatus === 'live' && (
-                <button className="primary" onClick={finishLive}>
-                  Finish & analyze
-                </button>
-              )}
             </div>
           </div>
           <div className="meeting-workspace-grid">
@@ -878,7 +606,8 @@ function ActionsPage() {
     j = useSelector((x) => x.jira),
     [filter, setFilter] = useState('pending'),
     [drafts, setDrafts] = useState({}),
-    [project, setProject] = useState('');
+    [project, setProject] = useState(''),
+    [creating, setCreating] = useState('');
   useEffect(() => {
     d(fetchActions());
     d(fetchJiraStatus());
@@ -927,6 +656,7 @@ function ActionsPage() {
           </div>
         }
       />
+      {j.error && <p className="error-text">{j.error}</p>}
       <div className="filter-tabs page-filters">
         {['pending', 'approved', 'rejected', 'all'].map((x) => (
           <button key={x} className={filter === x ? 'active' : ''} onClick={() => setFilter(x)}>
@@ -945,9 +675,6 @@ function ActionsPage() {
                   <span className={`status-badge ${item.reviewState}`}>{item.reviewState}</span>
                   <span className={`priority ${String(v.priority).toLowerCase()}`}>
                     {v.priority}
-                  </span>
-                  <span className="confidence">
-                    {Math.round((item.confidence || 0) * 100)}% confidence
                   </span>
                 </div>
                 <input
@@ -1025,21 +752,36 @@ function ActionsPage() {
                     Reject
                   </button>
                 )}
-                {item.reviewState === 'approved' && !item.jiraIssueKey && (
-                  <button
-                    className="jira-button"
-                    onClick={() =>
-                      d(
-                        createJiraIssue({
-                          id: item._id,
-                          projectKey: project || j.defaultProjectKey,
-                        }),
-                      )
-                    }
-                  >
-                    <Ticket size={15} /> Create Jira issue
-                  </button>
-                )}
+                {item.reviewState === 'approved' &&
+                  (item.jiraIssueKey ? (
+                    <button className="jira-button" disabled>
+                      <CheckCircle2 size={15} /> Created
+                    </button>
+                  ) : (
+                    <button
+                      className="jira-button"
+                      disabled={creating === item._id}
+                      onClick={() => {
+                        setCreating(item._id);
+                        d(
+                          createJiraIssue({
+                            id: item._id,
+                            projectKey: project || j.defaultProjectKey,
+                          }),
+                        ).finally(() => setCreating(''));
+                      }}
+                    >
+                      {creating === item._id ? (
+                        <>
+                          <LoaderCircle className="spin" size={15} /> Creating…
+                        </>
+                      ) : (
+                        <>
+                          <Ticket size={15} /> Create Jira issue
+                        </>
+                      )}
+                    </button>
+                  ))}
               </div>
             </article>
           );
@@ -1060,69 +802,19 @@ function ActionsPage() {
 }
 function JiraPage() {
   const d = useDispatch(),
-    j = useSelector((s) => s.jira),
-    [project, setProject] = useState('');
+    j = useSelector((s) => s.jira);
+  // Pull the latest status/assignee from Jira on open; the list still shows if Jira is unreachable.
   useEffect(() => {
-    d(fetchJiraStatus());
-    d(fetchJiraIssues());
-    d(fetchProjects());
+    d(syncJira()).finally(() => d(fetchJiraIssues()));
   }, []);
   return (
     <>
       <PageHead
-        eyebrow="JIRA INTEGRATION"
+        eyebrow="JIRA"
         title="Jira board"
-        sub="Connect a Jira Cloud workspace and synchronize issue status and assignee."
-        action={
-          <button className="secondary" onClick={() => d(syncJira())}>
-            <RefreshCw size={15} /> Sync statuses
-          </button>
-        }
+        sub="Issues created from approved action items, with their latest Jira status and assignee."
+        action={<span className="pill">{j.issues.length} issues</span>}
       />
-      <div className="panel jira-connect">
-        <div className="jira-mark">
-          <Ticket size={24} />
-        </div>
-        <div className="jira-connect-copy">
-          <h3>{j.connected ? 'Jira workspace connected' : 'Connect Jira Cloud'}</h3>
-          <p>
-            {j.connected
-              ? j.baseUrl
-              : 'Credentials remain on the backend. Configure Jira API credentials in server/.env, then validate the connection here.'}
-          </p>
-          {j.error && <p className="error-text">{j.error}</p>}
-        </div>
-        <div className="jira-connect-controls">
-          <select value={project} onChange={(e) => setProject(e.target.value)}>
-            <option value="">Select project</option>
-            {j.projects.map((p) => (
-              <option key={p.id} value={p.key}>
-                {p.key} — {p.name}
-              </option>
-            ))}
-          </select>
-          <button
-            className="primary"
-            disabled={j.status === 'loading'}
-            onClick={() => d(connectJira(project || j.defaultProjectKey))}
-          >
-            {j.status === 'loading' ? 'Connecting…' : 'Validate connection'}
-          </button>
-        </div>
-      </div>
-      <div className="section-row">
-        <div>
-          <h2>Linked issues</h2>
-          <p>Local issue mappings and most recently synchronized Jira fields.</p>
-        </div>
-        <span className="pill">{j.issues.length} issues</span>
-      </div>
-      {j.lastSync && (
-        <p className="sync-note">
-          Last sync result: {j.lastSync.synced} synced. Failed:{' '}
-          {j.lastSync.results?.filter((x) => x.status === 'failed').length || 0}.
-        </p>
-      )}
       <div className="table-card">
         {j.issues.map((issue) => (
           <div className="jira-row" key={issue._id}>
@@ -1158,7 +850,9 @@ function JiraPage() {
   );
 }
 function AnalyticsPage() {
-  const [stats, setStats] = useState(null);
+  const [stats, setStats] = useState(null),
+    [meetingId, setMeetingId] = useState('');
+  const shown = (stats?.byMeeting || []).filter((m) => !meetingId || m._id === meetingId);
   useEffect(() => {
     fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000/api') + '/analytics/overview', {
       credentials: 'include',
@@ -1200,17 +894,74 @@ function AnalyticsPage() {
           sub="Based on latest Jira sync"
         />
       </div>
-      <div className="panel analytics-panel">
-        <span className="eyebrow">SPEAKER PARTICIPATION</span>
-        <h3>Word count by speaker</h3>
-        <SpeakerBars speakers={stats?.speakers || []} />
-        {!stats?.speakers?.length && (
-          <p className="muted">
-            Speaker metrics appear after meetings are processed. Sentiment and engagement are
-            approximate AI signals, not performance assessments.
-          </p>
+      <div className="section-row analytics-panel">
+        <div>
+          <h2>Tasks by meeting</h2>
+          <p>Every task extracted from a meeting and the Jira ticket created for it.</p>
+        </div>
+        {!!stats?.byMeeting?.length && (
+          <label className="project-select meeting-filter">
+            Meeting
+            <select value={meetingId} onChange={(e) => setMeetingId(e.target.value)}>
+              <option value="">All meetings</option>
+              {stats.byMeeting.map((m) => (
+                <option key={m._id} value={m._id}>
+                  {m.title} · {new Date(m.createdAt).toLocaleDateString()}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
+      {shown.map((m) => (
+        <div className="table-card meeting-tasks" key={m._id}>
+          <NavLink className="meeting-row" to={`/meetings/${m._id}`}>
+            <div className="file-icon">
+              <FileText size={19} />
+            </div>
+            <div className="meeting-name">
+              <b>{m.title}</b>
+              <small>{new Date(m.createdAt).toLocaleString()}</small>
+            </div>
+            <span className="pill">{m.tasks.length} tasks</span>
+            <span className="pill">{m.tasks.filter((t) => t.jiraIssueKey).length} Jira tickets</span>
+          </NavLink>
+          {m.tasks.map((t) => (
+            <div className="jira-row" key={t._id}>
+              <div className="meeting-name">
+                <b>{t.title}</b>
+                <small>
+                  {t.jiraIssueKey
+                    ? `${t.jiraIssueKey} · ${t.jiraAssignee || 'Unassigned'}`
+                    : `${t.owner || 'No owner'} · No Jira ticket`}
+                </small>
+              </div>
+              {t.jiraIssueKey ? (
+                <>
+                  <JiraStatusBadge status={t.jiraStatus || 'To Do'} />
+                  <a href={t.jiraUrl} target="_blank" rel="noreferrer" className="icon-btn">
+                    <ArrowUpRight size={17} />
+                  </a>
+                </>
+              ) : (
+                <span className={`status-badge ${t.reviewState}`}>{t.reviewState}</span>
+              )}
+            </div>
+          ))}
+          {!m.tasks.length && (
+            <div className="jira-row">
+              <small className="muted">No tasks were found in this meeting.</small>
+            </div>
+          )}
+        </div>
+      ))}
+      {stats && !stats.byMeeting?.length && (
+        <div className="panel empty-state">
+          <FileText size={26} />
+          <b>No meetings yet</b>
+          <p>Upload a meeting to see its tasks and Jira tickets here.</p>
+        </div>
+      )}
     </>
   );
 }
@@ -1254,27 +1005,6 @@ function SettingsPage() {
           </button>
           {j.error && <p className="error-text">{j.error}</p>}
         </div>
-        <div className="panel">
-          <span className="eyebrow">AI & PROCESSING</span>
-          <h3>Runtime requirements</h3>
-          {[
-            ['MongoDB', 'Required for users, meetings and issue mappings'],
-            ['Redis + BullMQ', 'Required for queued media processing and retries'],
-            ['OpenAI API key', 'Required for LLM analysis and audio transcription'],
-            ['Jira API token', 'Required for project lookup, issue creation and sync'],
-          ].map(([a, b]) => (
-            <div className="requirement" key={a}>
-              <CheckCircle2 size={16} />
-              <div>
-                <b>{a}</b>
-                <small>{b}</small>
-              </div>
-            </div>
-          ))}
-          <div className="hint-box">
-            Use server/.env for secrets. Never commit it or share API tokens in screenshots.
-          </div>
-        </div>
       </div>
     </>
   );
@@ -1297,7 +1027,6 @@ function Protected() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/upload" element={<UploadPage />} />
-        <Route path="/live" element={<LivePage />} />
         <Route path="/meetings/:id" element={<MeetingPage />} />
         <Route path="/actions" element={<ActionsPage />} />
         <Route path="/jira" element={<JiraPage />} />

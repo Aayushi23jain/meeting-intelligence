@@ -4,11 +4,11 @@ const taskPattern =
 function fallback(lines) {
   const decisions = lines
     .filter((l) => /\b(decided|decision|agreed|approved|we will go with)\b/i.test(l.text))
-    .map((l) => ({ text: l.text, timestamp: l.timestamp || '', confidence: 0.55 }));
+    .map((l) => ({ text: l.text, timestamp: l.timestamp || '' }));
   const actionItems = lines
     .filter((l) => taskPattern.test(l.text))
     .slice(0, 30)
-    .map((l, i) => ({
+    .map((l) => ({
       title: l.text.replace(/^.{0,60}?:\s*/, '').slice(0, 120) || l.text.slice(0, 120),
       description: l.text,
       owner: l.speaker === 'Unknown' ? '' : l.speaker,
@@ -21,7 +21,6 @@ function fallback(lines) {
       startSeconds: l.startSeconds,
       sourceLineId: l.id,
       sourceText: l.text,
-      confidence: 0.52,
     }));
   return {
     summary: `Processed ${lines.length} transcript lines. ${decisions.length} possible decisions and ${actionItems.length} possible action items were detected. Review the evidence before creating tickets.`,
@@ -36,8 +35,7 @@ function speakerStats(lines) {
   const map = new Map();
   for (const l of lines) {
     const s = l.speaker || 'Unknown',
-      v = map.get(s) || { name: s, utterances: 0, wordCount: 0 };
-    v.utterances++;
+      v = map.get(s) || { name: s, wordCount: 0 };
     v.wordCount += (l.text.match(/\S+/g) || []).length;
     map.set(s, v);
   }
@@ -60,9 +58,8 @@ export async function analyzeMeeting(transcript, lines) {
           properties: {
             text: { type: 'string' },
             timestamp: { type: 'string' },
-            confidence: { type: 'number' },
           },
-          required: ['text', 'timestamp', 'confidence'],
+          required: ['text', 'timestamp'],
           additionalProperties: false,
         },
       },
@@ -80,7 +77,6 @@ export async function analyzeMeeting(transcript, lines) {
             startSeconds: { type: ['number', 'null'] },
             sourceLineId: { type: 'string' },
             sourceText: { type: 'string' },
-            confidence: { type: 'number' },
           },
           required: [
             'title',
@@ -92,7 +88,6 @@ export async function analyzeMeeting(transcript, lines) {
             'startSeconds',
             'sourceLineId',
             'sourceText',
-            'confidence',
           ],
           additionalProperties: false,
         },
@@ -103,11 +98,10 @@ export async function analyzeMeeting(transcript, lines) {
           type: 'object',
           properties: {
             name: { type: 'string' },
-            utterances: { type: 'number' },
             wordCount: { type: 'number' },
             sentiment: { type: 'string' },
           },
-          required: ['name', 'utterances', 'wordCount', 'sentiment'],
+          required: ['name', 'wordCount', 'sentiment'],
           additionalProperties: false,
         },
       },
@@ -132,7 +126,7 @@ export async function analyzeMeeting(transcript, lines) {
       {
         role: 'system',
         content:
-          'Analyze a meeting transcript. Extract only supported decisions and concrete follow-up tasks. Never invent a person, deadline, timestamp, or quote. sourceText must exactly match a transcript line and sourceLineId must be a matching line id. Use null startSeconds if unknown. Provide conservative confidence from 0 to 1. Sentiment/engagement are rough meeting-level signals, not facts about a person.',
+          'Analyze a meeting transcript. Extract only supported decisions and concrete follow-up tasks. Never invent a person, deadline, timestamp, or quote. owner is the person the transcript names as responsible (e.g. "Rahul will send the report", "Priya, can you fix the login?") or the speaker of a commitment when that line has a known speaker; leave owner empty when it is only "I"/"we" from an Unknown speaker. sourceText must exactly match a transcript line and sourceLineId must be a matching line id. Use null startSeconds if unknown. Sentiment/engagement are rough meeting-level signals, not facts about a person.',
       },
       { role: 'user', content: JSON.stringify({ transcript, lines }) },
     ],
